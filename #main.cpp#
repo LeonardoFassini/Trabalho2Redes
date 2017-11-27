@@ -1,0 +1,8 @@
+#include <cstdio>
+
+int main(void){
+
+  FILE *;
+  
+  return 0;
+}
