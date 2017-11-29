@@ -20,7 +20,7 @@ typedef struct mensagem{
   int alvo;
   int origem;
   int meio;
-  int pulos;
+  int saltos;
   char mensagem[100];
   int distancia[MAX];
 } mensagem_t;

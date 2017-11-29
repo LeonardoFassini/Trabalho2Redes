@@ -10,6 +10,7 @@
 #include <string.h>
 
 #define MAX 112
+#define MAXDIST 100
 #define INF 112345
 #define BUFLEN 101
 #define SERVER "127.0.0.1"
