@@ -11,8 +11,10 @@ pthread_mutex_t fila_snd = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t fila_msg = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t fila_enviar = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t fila_snd_cfg = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t vetor_distancia = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex_alterou_vd = PTHREAD_MUTEX_INITIALIZER;
 mensagem_t mensagem_cfg[MAX], mensagem_snd[MAX], mensagem_enviar[MAX], mensagem_snd_cfg[MAX];
-int item_msg = 0, item_snd = 0, item_enviar = 0, item_cfg = 0, item_snd_cfg = 0;
+int item_msg = 0, item_snd = 0, item_enviar = 0, item_cfg = 0, item_snd_cfg = 0, alterou_vd = 0, alterou = 0;
 
 void die(char *s){
   perror(s);
@@ -26,7 +28,7 @@ void *tratar_cfg(void*data){
   mensagem_t mensagem;
   struct sockaddr_in si_other;
   int s, slen = sizeof(si_other);
-  int i, alterou, alterou_vd;
+  int i;
   
   //CONFIGURAR THREAD
   if((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) die("socket");
@@ -38,8 +40,6 @@ void *tratar_cfg(void*data){
   }
   
   while(1){
-    alterou = 0;
-    alterou_vd = 0;
     pthread_mutex_lock(&fila_snd);
     if(item_cfg){
       mensagem = mensagem_cfg[0];
@@ -50,13 +50,17 @@ void *tratar_cfg(void*data){
     pthread_mutex_unlock(&fila_snd);
     // Se pegou uma mensagem, trata ela.
     if(alterou){
+      alterou = 0;
+      pthread_mutex_lock(&vetor_distancia);
       for(i = 0; i < MAX; i++)
 	if(distancia[i] > mensagem.distancia[i] + distancia[mensagem.origem] ){
 	  distancia[i] = mensagem.distancia[i] + distancia[mensagem.meio];
 	  nh[i] = mensagem.meio;
 	  alterou_vd = 1;
 	}
+      pthread_mutex_unlock(&vetor_distancia);
       if(alterou_vd){
+	alterou_vd = 0;
 	printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
 	printf("                 NOVO VETOR DISTANCIA\n");
 	for(i = 0; i < MAX; i++) if(distancia[i] != INF) printf("%d -> %d: %d Custo: %d \n", meuid, i, nh[i], distancia[i]);
@@ -95,7 +99,6 @@ void *tratar_snd(void *data){
     // Locka e pega a mensagem
     pthread_mutex_lock(&fila_snd);
     if(item_snd > 0){ // Tem alguma mensagem? se sim pega a mensagem e da shift a esquerda para as mensagem estarem no inicio.
-      printf("%d\n", item_snd);
       mensagem = mensagem_snd[0];
       alterou = 1;
       item_snd--;
@@ -108,7 +111,7 @@ void *tratar_snd(void *data){
 	printf("----------------------------------------------\n\n");
 	printf("Uma nova mensagem chegou!\n");
 	printf("A mensagem veio de %d, sua origem é %d!\n", mensagem.meio, mensagem.origem);
-	printf(" O condeudo eh: %s\n\n", mensagem.mensagem);
+	printf("O condeudo eh:\n '%s'\n", mensagem.mensagem);
 	printf("----------------------------------------------\n");
       }
       else{ // Se nao sou eu, tenho que enviar essa mensagem para o proximo salto.
@@ -171,19 +174,43 @@ void *aguardar_mensagem(void *data){
   mensagem_t mensagem;
   char string[101];
   int id_destino;
+  int vizinho_alvo, novo_custo, opcao, i;
   while(1){
-    printf("Digite a mensagem que deseja, aperte enter e digite o id destino\n");
-    fgets(string, 100, stdin);
-    scanf("%d", &id_destino);
-    strcpy(mensagem.status, "SND");
-    mensagem.origem = meuid;
-    mensagem.meio = meuid;
-    mensagem.alvo = id_destino;
-    mensagem.saltos = 0;
-    strcpy(mensagem.mensagem, string);
-    pthread_mutex_lock(&fila_enviar);
-    mensagem_enviar[item_enviar++] = mensagem;
-    pthread_mutex_unlock(&fila_enviar);
+    printf("O que deseja?\n1- Mudar o custo do enlace.\n2- Enviar uma mensagem.\n");
+    scanf("%d", &opcao);
+    if(opcao == 1){
+      printf("Digite para qual vizinho deseja mudar e qual o novo custo.\n");
+      scanf("%d %d", &vizinho_alvo, &novo_custo);
+      if(vizinho[vizinho_alvo] == 1){
+	pthread_mutex_lock(&vetor_distancia);
+	distancia[vizinho_alvo] = novo_custo;
+	pthread_mutex_unlock(&vetor_distancia);
+	alterou = 1;
+	alterou_vd = 1;
+      }
+      else printf("esse no nao eh um vizinho\n");
+    }
+    else if(opcao == 2){
+      printf("Digite a mensagem que deseja, aperte enter e digite o id destino\n");
+      getchar();
+      fgets(string, 100, stdin);
+      scanf("%d", &id_destino);
+      strcpy(mensagem.status, "SND");
+      mensagem.origem = meuid;
+      mensagem.meio = meuid;
+      mensagem.alvo = id_destino;
+      mensagem.saltos = 0;
+      strcpy(mensagem.mensagem, string);
+      pthread_mutex_lock(&fila_enviar);
+      mensagem_enviar[item_enviar++] = mensagem;
+      pthread_mutex_unlock(&fila_enviar);
+    }
+    else{
+      printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+      printf("                 VETOR DISTANCIA\n");
+      for(i = 0; i < MAX; i++) if(distancia[i] != INF) printf("%d -> %d: %d Custo: %d \n", meuid, i, nh[i], distancia[i]);
+      printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+    }
   }
 }
 
@@ -234,7 +261,7 @@ void *enviar_vetor(void *data){
 // as configuracoes, alterando ou nao seu vetor distancia.
 void *receptor(void *data){
   struct sockaddr_in si_me, si_other;
-  int s, slen = sizeof(si_other), recv_len, i;
+  int s, slen = sizeof(si_other), recv_len;
   mensagem_t mensagem;
   
   if((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) die("socket");
